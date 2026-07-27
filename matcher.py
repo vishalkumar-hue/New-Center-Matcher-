@@ -326,7 +326,14 @@ class DistrictMatcher:
 # ═══════════════════════════════════════════════════════════════
 #  SINGLE B FILE MATCHING (purana, single tab output)
 # ═══════════════════════════════════════════════════════════════
-def run_matching(file_a_path, file_b_path, output_path):
+def run_matching(file_a_path, file_b_path, output_path, state_filter=None):
+    """
+    state_filter: (optional) agar diya gaya to File B ko sirf us state
+    ke rows tak filter kiya jaayega (case-insensitive substring match
+    against File B's "state" column, agar wo column exist karta hai).
+    Default None matlab NO filtering -- pehle "UTTAR PRADESH" hardcoded
+    tha, ab caller decide karta hai.
+    """
     df_a = pd.read_excel(file_a_path)
     df_b = pd.read_excel(file_b_path)
     df_a.columns = df_a.columns.str.strip()
@@ -336,8 +343,10 @@ def run_matching(file_a_path, file_b_path, output_path):
     COL_B_DIST = [c for c in df_b.columns if 'district' in c.lower()][0]
 
     b_state_col = [c for c in df_b.columns if 'state' in c.lower()]
-    if b_state_col:
-        df_b_filtered = df_b[df_b[b_state_col[0]].str.upper().str.contains('UTTAR PRADESH', na=False)].copy()
+    if state_filter and b_state_col:
+        df_b_filtered = df_b[
+            df_b[b_state_col[0]].str.upper().str.contains(state_filter.upper(), na=False)
+        ].copy()
     else:
         df_b_filtered = df_b.copy()
 
