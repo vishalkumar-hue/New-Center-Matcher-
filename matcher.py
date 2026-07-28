@@ -8,10 +8,12 @@ from openpyxl.utils import get_column_letter
 MATCH_THRESHOLD = 65
 COL_NAME = "TEST CENTER NAME"
 
-DISTRICT_ALIASES = {
-    "KANPUR NAGAR": "KANPUR",
-    "KANPUR DEHAT": "KANPUR DEHAT",
-}
+# FIX 10 (dynamic): Ye dict pehle sirf UP ke "Kanpur Nagar/Dehat" ke liye
+# hardcoded tha. Ab khali hai -- kisi bhi state ke liye kaam karega.
+# Agar tumhare data mein koi district genuinely bahut alag naam se dono
+# files mein likha jaata hai (jo fuzzy-match bhi nahi pakad paata), to
+# yahan explicit entry daal sakte ho: "FILE-A-WALA-NAAM": "FILE-B-WALA-NAAM"
+DISTRICT_ALIASES = {}
 DISTRICT_FUZZY_THRESHOLD = 0.82
 
 # ---- FIX 2: gic/ggic ab decompose hote hain "govt ic" / "govt girls ic" mein,
@@ -74,11 +76,15 @@ CANONICAL = [
 NOISE = {
     'the', 'and', 'of', 'for', 'in', 'at', 'by', 'near', 'new', 'old',
     'no', 'number', 'sh', 'smt', 'dr', 'km', 'late', 'pt', 'prof',
-    'agra', 'lucknow', 'kanpur', 'varanasi', 'prayagraj', 'aligarh',
-    'ayodhya', 'azamgarh', 'mathura', 'bareilly', 'moradabad', 'meerut',
-    'ghaziabad', 'noida', 'gorakhpur', 'allahabad', 'jhansi', 'firozabad',
-    'basti', 'saharanpur', 'mirzapur', 'banda',
 }
+
+# FIX 10 (dynamic): Generic administrative-suffix words jo KISI BHI state
+# mein district ke naam ke saath aa sakte hain (e.g. "Kanpur NAGAR" vs
+# "Kanpur", "Jaipur RURAL" vs "Jaipur", "Bikaner CITY" vs "Bikaner").
+# Pehle sirf UP ke "Kanpur Nagar/Dehat" specific case hardcoded tha --
+# ab ye kisi bhi state ke district-suffix variation ko generically
+# handle karta hai (dekho normalize_district function).
+DISTRICT_ADMIN_SUFFIXES = {'NAGAR', 'DEHAT', 'RURAL', 'URBAN', 'CITY', 'DISTT'}
 
 STRUCTURAL_TOKENS = {'ic', 'govt', 'pgcollege', 'pg', 'srsc', 'ps',
                      'kv', 'dav', 'school', 'college', 'girls', 'boys', 'shri', 'ideal',
@@ -156,7 +162,7 @@ def _merge_acronyms(x):
     return ' '.join(out)
 
 
-def clean_text(x):
+def clean_text(x, district=None):
     x = str(x).lower()
     x = re.sub(r'\(?\s*block[-\s]*([a-z0-9]+)\s*\)?', r' blk\1 ', x)
     x = _merge_acronyms(x)
@@ -167,7 +173,17 @@ def clean_text(x):
     for pattern, replacement in CANONICAL:
         x = re.sub(pattern, replacement, x)
     x = re.sub(r'\s+', ' ', x).strip()
-    words = [w for w in x.split() if w not in NOISE and len(w) > 0]
+    # FIX 10 (dynamic): pehle NOISE list mein UP ke shehar hardcoded the
+    # (agra, lucknow, kanpur, ...) taaki center-naam ke aakhir mein aaya
+    # "...., AGRA" jaisa city-suffix similarity score ko fake inflate na
+    # kare. Ab ye kisi bhi state ke liye kaam karta hai -- row ka apna
+    # District Name hi dynamically uske center-naam se nikaal diya jaata
+    # hai, chahe koi bhi state ho.
+    dist_words = set()
+    if district:
+        d_clean = re.sub(r'[^a-z0-9 ]', ' ', str(district).lower())
+        dist_words = {w for w in d_clean.split() if len(w) > 2}
+    words = [w for w in x.split() if w not in NOISE and w not in dist_words and len(w) > 0]
     words = _normalize_block_tokens(words)
     return " ".join(words).strip()
 
@@ -291,6 +307,15 @@ def normalize_district(d):
     return DISTRICT_ALIASES.get(d, d)
 
 
+def _strip_admin_suffix(d):
+    """FIX 10 (dynamic): 'KANPUR NAGAR' -> 'KANPUR', 'JAIPUR RURAL' -> 'JAIPUR'
+    -- kisi bhi state ke generic administrative suffix word ko hata deta hai,
+    taaki wahi district dono files mein match ho jaye chahe ek file mein
+    suffix likha ho aur doosri mein na ho."""
+    words = [w for w in d.split() if w not in DISTRICT_ADMIN_SUFFIXES]
+    return ' '.join(words).strip()
+
+
 class DistrictMatcher:
     """
     Exact district match na milne par closest existing district
@@ -303,6 +328,15 @@ class DistrictMatcher:
         self.threshold = threshold
         self.cache = {}
         self.unmatched_districts = set()
+        # admin-suffix-stripped lookup, laziy built on first use
+        self._stripped_lookup = None
+
+    def _build_stripped_lookup(self):
+        lookup = {}
+        for cand in self.grouped.groups.keys():
+            key = _strip_admin_suffix(cand)
+            lookup.setdefault(key, cand)
+        self._stripped_lookup = lookup
 
     def get_group(self, dist):
         if dist in self.grouped.groups:
@@ -318,6 +352,17 @@ class DistrictMatcher:
         if best_score >= self.threshold:
             self.cache[dist] = best
             return self.grouped.get_group(best)
+        # FIX 10 (dynamic) fallback: agar plain fuzzy match bhi na mile,
+        # to admin-suffix hata ke try karo (e.g. "KANPUR NAGAR" -> "KANPUR",
+        # "JAIPUR RURAL" -> "JAIPUR"). Ye kisi bhi state ke liye kaam karta
+        # hai, kisi hardcoded city list ki zaroorat nahi.
+        if self._stripped_lookup is None:
+            self._build_stripped_lookup()
+        stripped_dist = _strip_admin_suffix(dist)
+        if stripped_dist in self._stripped_lookup:
+            match = self._stripped_lookup[stripped_dist]
+            self.cache[dist] = match
+            return self.grouped.get_group(match)
         self.cache[dist] = None
         self.unmatched_districts.add(dist)
         return None
@@ -326,14 +371,7 @@ class DistrictMatcher:
 # ═══════════════════════════════════════════════════════════════
 #  SINGLE B FILE MATCHING (purana, single tab output)
 # ═══════════════════════════════════════════════════════════════
-def run_matching(file_a_path, file_b_path, output_path, state_filter=None):
-    """
-    state_filter: (optional) agar diya gaya to File B ko sirf us state
-    ke rows tak filter kiya jaayega (case-insensitive substring match
-    against File B's "state" column, agar wo column exist karta hai).
-    Default None matlab NO filtering -- pehle "UTTAR PRADESH" hardcoded
-    tha, ab caller decide karta hai.
-    """
+def run_matching(file_a_path, file_b_path, output_path):
     df_a = pd.read_excel(file_a_path)
     df_b = pd.read_excel(file_b_path)
     df_a.columns = df_a.columns.str.strip()
@@ -342,16 +380,22 @@ def run_matching(file_a_path, file_b_path, output_path, state_filter=None):
     COL_A_DIST = [c for c in df_a.columns if 'district' in c.lower()][0]
     COL_B_DIST = [c for c in df_b.columns if 'district' in c.lower()][0]
 
+    a_state_col = [c for c in df_a.columns if 'state' in c.lower()]
     b_state_col = [c for c in df_b.columns if 'state' in c.lower()]
-    if state_filter and b_state_col:
-        df_b_filtered = df_b[
-            df_b[b_state_col[0]].str.upper().str.contains(state_filter.upper(), na=False)
-        ].copy()
+    if b_state_col and a_state_col:
+        # FIX 9: Pehle ye "UTTAR PRADESH" pe hardcoded tha (sirf UP-specific
+        # project ke liye likha gaya tha). Ab List A mein jo bhi state(s)
+        # maujood hain unhi se List B ko dynamically filter karta hai --
+        # isse ye kisi bhi state ke data ke saath kaam karega.
+        a_states = set(df_a[a_state_col[0]].astype(str).str.upper().str.strip())
+        df_b_filtered = df_b[df_b[b_state_col[0]].astype(str).str.upper().str.strip().isin(a_states)].copy()
+    elif b_state_col:
+        df_b_filtered = df_b.copy()
     else:
         df_b_filtered = df_b.copy()
 
-    df_a["_name"] = df_a[COL_NAME].apply(clean_text)
-    df_b_filtered["_name"] = df_b_filtered[COL_NAME].apply(clean_text)
+    df_a["_name"] = df_a.apply(lambda r: clean_text(r[COL_NAME], r[COL_A_DIST]), axis=1)
+    df_b_filtered["_name"] = df_b_filtered.apply(lambda r: clean_text(r[COL_NAME], r[COL_B_DIST]), axis=1)
     df_a["_dist"] = df_a[COL_A_DIST].apply(normalize_district)
     df_b_filtered["_dist"] = df_b_filtered[COL_B_DIST].apply(normalize_district)
 
@@ -460,7 +504,7 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
     COL_A_DIST = [c for c in df_a.columns if 'district' in c.lower()][0]
     COL_A_STATE = [c for c in df_a.columns if 'state' in c.lower()]
 
-    df_a["_name"] = df_a[COL_NAME].apply(clean_text)
+    df_a["_name"] = df_a.apply(lambda r: clean_text(r[COL_NAME], r[COL_A_DIST]), axis=1)
     df_a["_dist"] = df_a[COL_A_DIST].apply(normalize_district)
     if COL_A_STATE:
         df_a["_state"] = df_a[COL_A_STATE[0]].str.upper().str.strip()
@@ -478,7 +522,7 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         COL_B_DIST = [c for c in df_b.columns if 'district' in c.lower()][0]
         b_state_col = [c for c in df_b.columns if 'state' in c.lower()]
 
-        df_b["_name"] = df_b[COL_NAME].apply(clean_text)
+        df_b["_name"] = df_b.apply(lambda r: clean_text(r[COL_NAME], r[COL_B_DIST]), axis=1)
         df_b["_dist"] = df_b[COL_B_DIST].apply(normalize_district)
 
         if b_state_col:
