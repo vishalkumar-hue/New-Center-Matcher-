@@ -11,26 +11,88 @@ import storage
 
 st.set_page_config(page_title="Center Matcher Tool", page_icon="🔎", layout="centered")
 
-# ── Thoda sa custom CSS, taaki dark/light dono theme mein accent color dikhe ──
+# ── Custom styling (colors work in both light and dark theme) ──
 st.markdown("""
 <style>
-.stat-box {
-    border-radius: 12px;
-    padding: 14px 10px;
-    text-align: center;
+:root {
+    --c-primary: #5B5BD6;
+    --c-primary-dark: #4338CA;
+    --c-teal: #0D9488;
 }
-.stat-green { background: #E1F5EE; color: #085041; }
-.stat-red   { background: #FCEBEB; color: #791F1F; }
-.stat-amber { background: #FAEEDA; color: #633806; }
-.stat-num   { font-size: 26px; font-weight: 700; }
-.stat-lbl   { font-size: 12px; margin-top: 2px; }
+/* Hero banner */
+.hero {
+    background: linear-gradient(120deg, #4338CA 0%, #6D5BE0 45%, #0D9488 100%);
+    border-radius: 16px;
+    padding: 26px 28px;
+    margin-bottom: 18px;
+    color: #FFFFFF;
+    box-shadow: 0 6px 18px rgba(67, 56, 202, 0.25);
+}
+.hero h1 { color: #FFFFFF; margin: 0; padding: 0; font-size: 2rem; }
+.hero p  { color: rgba(255,255,255,0.88); margin: 6px 0 0 0; font-size: 0.95rem; }
+
+/* Tabs as pills (works for both old button-based and new div-based Streamlit tabs) */
+div[role="tablist"], div[data-baseweb="tab-list"] { gap: 8px; border-bottom: none !important; box-shadow: none !important; }
+[role="tab"] {
+    border-radius: 999px !important;
+    padding: 8px 18px !important;
+    background: rgba(91, 91, 214, 0.12) !important;
+    transition: all .15s ease;
+    cursor: pointer;
+}
+[role="tab"]:hover { background: rgba(91, 91, 214, 0.22) !important; }
+[role="tab"][aria-selected="true"] {
+    background: linear-gradient(120deg, #4338CA, #6D5BE0) !important;
+}
+[role="tab"][aria-selected="true"] *,
+[role="tab"][aria-selected="true"] p { color: #FFFFFF !important; font-weight: 600; }
+.react-aria-SelectionIndicator,
+div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"] { display: none !important; }
+
+/* Buttons */
+.stButton > button[kind="primary"],
+button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(120deg, #4338CA, #0D9488);
+    border: none; color: #FFFFFF; border-radius: 10px; font-weight: 600;
+}
+.stButton > button[kind="primary"]:hover,
+button[data-testid="stBaseButton-primary"]:hover { filter: brightness(1.1); }
+.stDownloadButton > button, button[data-testid="stBaseButton-secondary"] {
+    border-radius: 10px; border: 1.5px solid #5B5BD6;
+}
+
+/* Section headings */
+h2, h3 { border-left: 5px solid #0D9488; padding-left: 10px; }
+
+/* Stat boxes */
+.stat-box {
+    border-radius: 14px;
+    padding: 16px 10px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.stat-green { background: linear-gradient(135deg, #D1FAE5, #A7F3D0); color: #065F46; border-bottom: 4px solid #10B981; }
+.stat-red   { background: linear-gradient(135deg, #FEE2E2, #FECACA); color: #991B1B; border-bottom: 4px solid #EF4444; }
+.stat-amber { background: linear-gradient(135deg, #FEF3C7, #FDE68A); color: #92400E; border-bottom: 4px solid #F59E0B; }
+.stat-row-gap { margin-bottom: 18px; }
+.stat-num   { font-size: 28px; font-weight: 800; }
+.stat-lbl   { font-size: 12px; margin-top: 2px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; }
+
+/* Metric cards */
+div[data-testid="stMetric"] {
+    background: rgba(91, 91, 214, 0.08);
+    border-left: 5px solid #5B5BD6;
+    border-radius: 12px;
+    padding: 10px 16px;
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🔎 Center Matcher Tool")
-st.caption(
-    "Compare List A against List B using fuzzy name matching. "
-    "You can upload one or multiple List B files."
+st.markdown(
+    '<div class="hero"><h1>🔎 Center Matcher Tool</h1>'
+    '<p>Compare List A against List B using fuzzy name matching. '
+    'You can upload one or multiple List B files.</p></div>',
+    unsafe_allow_html=True,
 )
 
 tab_single, tab_multi, tab_history = st.tabs(
@@ -251,6 +313,7 @@ with tab_multi:
         show_stats_row(stats["total_matched"], stats["total_unmatched_a"], stats["total_unmatched_b"])
 
         # NEW FEATURE: common centers (2+ projects mein match hue)
+        st.write("")
         st.markdown("#### 🤝 Common centers (matched in multiple projects)")
         st.metric("Common centers", stats.get("common_count", 0))
         common_df = stats.get("common_df")
