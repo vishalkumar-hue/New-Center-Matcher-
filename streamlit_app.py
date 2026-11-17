@@ -29,8 +29,8 @@ st.markdown("""
 
 st.title("🔎 Center Matcher Tool")
 st.caption(
-    "List A ko List B ke saath fuzzy naam-matching se compare karo. "
-    "Ek ya multiple List B files upload kar sakte ho."
+    "Compare List A against List B using fuzzy name matching. "
+    "You can upload one or multiple List B files."
 )
 
 tab_single, tab_multi, tab_history = st.tabs(
@@ -66,8 +66,8 @@ def cached_load_run(name, _conf):
 
 
 def save_uploaded_file(uploaded_file, dest_dir):
-    """Streamlit ke uploaded file object ko disk pe save karta hai
-    (matcher.py ke functions path expect karte hain, in-memory object nahi)."""
+    """Save a Streamlit uploaded file to disk
+    (matcher.py functions expect file paths, not in-memory objects)."""
     suffix = Path(uploaded_file.name).suffix
     path = os.path.join(dest_dir, f"{uploaded_file.name}")
     with open(path, "wb") as f:
@@ -105,11 +105,14 @@ with tab_single:
         "List B (.xlsx / .xls)", type=["xlsx", "xls"], key="single_b"
     )
 
+    single_label = st.text_input(
+        "Run name (optional — the run is saved in history under this name)", key="single_run_label"
+    )
     run_single = st.button("▶️ Run matching", key="run_single", type="primary")
 
     if run_single:
         if not file_a_single or not file_b_single:
-            st.error("List A aur List B dono files required hain.")
+            st.error("Both List A and List B files are required.")
         else:
             with st.spinner("Matching in progress..."):
                 with tempfile.TemporaryDirectory() as tmp_dir:
@@ -125,6 +128,21 @@ with tab_single:
 
                         st.session_state["single_stats"] = stats
                         st.session_state["single_result_bytes"] = result_bytes
+
+                        # Save the result permanently (visible in Saved history)
+                        st.session_state.pop("single_saved_name", None)
+                        st.session_state.pop("single_save_error", None)
+                        try:
+                            label = "Single_" + (
+                                single_label.strip()
+                                or f"{Path(file_a_single.name).stem}_vs_{Path(file_b_single.name).stem}"
+                            )
+                            st.session_state["single_saved_name"] = storage.save_run(
+                                label, result_bytes, GH_CONF
+                            )
+                            st.session_state["history_bust"] = st.session_state.get("history_bust", 0) + 1
+                        except Exception as save_err:
+                            st.session_state["single_save_error"] = str(save_err)
                     except Exception as e:
                         st.error(f"Error: {e}")
                         st.session_state.pop("single_stats", None)
@@ -133,11 +151,17 @@ with tab_single:
     if "single_stats" in st.session_state:
         stats = st.session_state["single_stats"]
         st.success("✅ Matching complete")
+        if st.session_state.get("single_saved_name"):
+            st.info(f"💾 Saved to history: `{st.session_state['single_saved_name']}` "
+                    "— you can view it anytime in the 📚 Saved history tab.")
+        if st.session_state.get("single_save_error"):
+            st.warning(f"⚠️ Could not save to history: {st.session_state['single_save_error']} "
+                       "(Please download the result.)")
         show_stats_row(stats["matched"], stats["unmatched_a"], stats["unmatched_b"])
         st.metric("Match rate", f"{stats['match_rate']}%")
 
         if stats.get("unmatched_districts"):
-            with st.expander(f"⚠️ {len(stats['unmatched_districts'])} district(s) List B mein nahi mile"):
+            with st.expander(f"⚠️ {len(stats['unmatched_districts'])} district(s) not found in List B"):
                 st.write(", ".join(stats["unmatched_districts"]))
 
         st.download_button(
@@ -158,7 +182,7 @@ with tab_multi:
     )
 
     st.subheader("2️⃣ List B — multiple files")
-    st.caption("Ctrl (Windows) ya Cmd (Mac) daba ke multiple files select karo — har file output mein apni tab banayegi.")
+    st.caption("Hold Ctrl (Windows) or Cmd (Mac) to select multiple files — each file gets its own tab in the output.")
     files_b_multi = st.file_uploader(
         "List B files (.xlsx / .xls)", type=["xlsx", "xls"],
         accept_multiple_files=True, key="multi_b"
@@ -168,15 +192,15 @@ with tab_multi:
         st.write(f"**{len(files_b_multi)} file(s) selected:** " + ", ".join(f.name for f in files_b_multi))
 
     run_label = st.text_input(
-        "Run name (optional — history me isi naam se save hoga)", key="multi_run_label"
+        "Run name (optional — the run is saved in history under this name)", key="multi_run_label"
     )
     run_multi = st.button("▶️ Run matching — All B files", key="run_multi", type="primary")
 
     if run_multi:
         if not file_a_multi:
-            st.error("List A file required hai.")
+            st.error("List A file is required.")
         elif not files_b_multi:
-            st.error("Kam se kam ek List B file required hai.")
+            st.error("At least one List B file is required.")
         else:
             with st.spinner("Matching in progress... This may take a few moments."):
                 with tempfile.TemporaryDirectory() as tmp_dir:
@@ -219,15 +243,15 @@ with tab_multi:
         stats = st.session_state["multi_stats"]
         st.success("✅ Matching complete")
         if st.session_state.get("multi_saved_name"):
-            st.info(f"💾 History me save ho gaya: `{st.session_state['multi_saved_name']}` "
-                    "— 📚 Saved history tab me kabhi bhi dekh sakte ho.")
+            st.info(f"💾 Saved to history: `{st.session_state['multi_saved_name']}` "
+                    "— you can view it anytime in the 📚 Saved history tab.")
         if st.session_state.get("multi_save_error"):
-            st.warning(f"⚠️ History me save nahi ho paya: {st.session_state['multi_save_error']} "
-                       "(Result download kar lo.)")
+            st.warning(f"⚠️ Could not save to history: {st.session_state['multi_save_error']} "
+                       "(Please download the result.)")
         show_stats_row(stats["total_matched"], stats["total_unmatched_a"], stats["total_unmatched_b"])
 
         # NEW FEATURE: common centers (2+ projects mein match hue)
-        st.markdown("#### 🤝 Common centers (multiple projects mein match)")
+        st.markdown("#### 🤝 Common centers (matched in multiple projects)")
         st.metric("Common centers", stats.get("common_count", 0))
         common_df = stats.get("common_df")
         if common_df is not None and not common_df.empty:
@@ -235,16 +259,16 @@ with tab_multi:
                          if c in ("TEST CENTER NAME", "Common In (Count)", "Project Codes")
                          or c.lower().endswith("district name")]
             st.dataframe(common_df[show_cols], use_container_width=True, hide_index=True)
-            st.caption("Poora record (har project ka center name + match %) Excel ke "
-                       "'COMMON_CENTERS' tab mein hai.")
+            st.caption("The full record (center name + match % for each project) is in the "
+                       "'COMMON_CENTERS' tab of the Excel file.")
         else:
-            st.info("Koi center ek se zyada project mein common match nahi hua.")
+            st.info("No center was matched in more than one project.")
 
         cs_df = stats.get("common_summary_df")
         if cs_df is not None and not cs_df.empty:
             st.markdown("#### 📊 Project-wise common summary")
             st.dataframe(cs_df, use_container_width=True, hide_index=True)
-            st.caption("Pairwise matrix Excel ke 'COMMON_SUMMARY' tab mein neeche hai.")
+            st.caption("The pairwise matrix is at the bottom of the 'COMMON_SUMMARY' tab in the Excel file.")
 
         st.markdown("#### Per-file breakdown")
         st.dataframe(
@@ -263,7 +287,7 @@ with tab_multi:
         )
 
         if stats.get("unmatched_districts"):
-            with st.expander(f"⚠️ {len(stats['unmatched_districts'])} district(s) kisi B file mein nahi mile"):
+            with st.expander(f"⚠️ {len(stats['unmatched_districts'])} district(s) not found in any B file"):
                 st.write(", ".join(stats["unmatched_districts"]))
 
         st.download_button(
@@ -277,8 +301,7 @@ with tab_multi:
 #  TAB 3 — SAVED HISTORY (permanent)
 # ═══════════════════════════════════════════════════════════════
 def split_common_summary(raw):
-    """COMMON_SUMMARY sheet me 2 tables hain (project-wise + matrix);
-    inhe alag alag DataFrame me todta hai."""
+    """Split the COMMON_SUMMARY sheet into its two tables (project-wise + matrix)."""
     blank = raw.index[raw.isna().all(axis=1)].tolist()
     if not blank:
         return raw, None
@@ -297,12 +320,12 @@ with tab_history:
     st.subheader("📚 Saved history")
     if GH_CONF:
         st.caption(f"✅ Permanent storage: GitHub repo `{GH_CONF['repo']}` — "
-                   "reboot / redeploy ke baad bhi data rahega.")
+                   "data stays safe across reboots and redeploys.")
     else:
         st.warning(
-            "⚠️ GitHub storage configure nahi hai — results local folder me save ho rahe hain. "
-            "Streamlit Cloud par ye reboot pe mit jaayega. App Settings → Secrets me `[github]` "
-            "section add karo (README/setup notes dekho)."
+            "⚠️ GitHub storage is not configured — results are being saved to a local folder. "
+            "On Streamlit Cloud this is erased on reboot. Add a `[github]` section in "
+            "App Settings → Secrets to keep history permanently."
         )
 
     if st.button("🔄 Refresh list", key="hist_refresh"):
@@ -312,11 +335,11 @@ with tab_history:
         runs = cached_list_runs(GH_CONF, st.session_state.get("history_bust", 0))
     except Exception as e:
         runs = []
-        st.error(f"History load nahi hui: {e}")
+        st.error(f"Could not load history: {e}")
 
     if not runs:
-        st.info("Abhi koi saved run nahi hai. Multiple B files tab me matching run karo — "
-                "result apne aap yahan save ho jaayega.")
+        st.info("No saved runs yet. Run matching in the Multiple B files tab — "
+                "the result will be saved here automatically.")
     else:
         by_name = {r["name"]: r for r in runs}
         chosen = st.selectbox(
@@ -330,7 +353,7 @@ with tab_history:
             sheets = pd.read_excel(io.BytesIO(data), sheet_name=None, header=None)
         except Exception as e:
             sheets = None
-            st.error(f"Run load nahi hua: {e}")
+            st.error(f"Could not load run: {e}")
 
         if sheets:
             st.download_button(
@@ -340,7 +363,7 @@ with tab_history:
             )
             names = list(sheets.keys())
             default_idx = names.index("COMMON_SUMMARY") if "COMMON_SUMMARY" in names else 0
-            sheet_pick = st.selectbox("Tab dekho", names, index=default_idx, key="hist_sheet")
+            sheet_pick = st.selectbox("View tab", names, index=default_idx, key="hist_sheet")
             raw = sheets[sheet_pick]
             if sheet_pick == "COMMON_SUMMARY":
                 t1, t2 = split_common_summary(raw)
