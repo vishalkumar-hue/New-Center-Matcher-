@@ -3,7 +3,11 @@ import tempfile
 import os
 from pathlib import Path
 
+import io
+import pandas as pd
+
 from matcher import run_matching, run_matching_multi
+import storage
 
 st.set_page_config(page_title="Center Matcher Tool", page_icon="🔎", layout="centered")
 
@@ -29,7 +33,36 @@ st.caption(
     "Ek ya multiple List B files upload kar sakte ho."
 )
 
-tab_single, tab_multi = st.tabs(["📄 Single B file", "🗂️ Multiple B files"])
+tab_single, tab_multi, tab_history = st.tabs(
+    ["📄 Single B file", "🗂️ Multiple B files", "📚 Saved history"]
+)
+
+
+# ── Permanent storage config (Streamlit secrets [github]) ──
+def get_gh_conf():
+    try:
+        g = st.secrets["github"]
+        return {
+            "token": g["token"],
+            "repo": g["repo"],
+            "branch": g.get("branch", "main"),
+            "dir": g.get("dir", "runs"),
+        }
+    except Exception:
+        return None
+
+
+GH_CONF = get_gh_conf()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_list_runs(_conf, _bust):
+    return storage.list_runs(_conf)
+
+
+@st.cache_data(show_spinner=False)
+def cached_load_run(name, _conf):
+    return storage.load_run(name, _conf)
 
 
 def save_uploaded_file(uploaded_file, dest_dir):
@@ -134,6 +167,9 @@ with tab_multi:
     if files_b_multi:
         st.write(f"**{len(files_b_multi)} file(s) selected:** " + ", ".join(f.name for f in files_b_multi))
 
+    run_label = st.text_input(
+        "Run name (optional — history me isi naam se save hoga)", key="multi_run_label"
+    )
     run_multi = st.button("▶️ Run matching — All B files", key="run_multi", type="primary")
 
     if run_multi:
@@ -162,6 +198,18 @@ with tab_multi:
 
                         st.session_state["multi_stats"] = stats
                         st.session_state["multi_result_bytes"] = result_bytes
+
+                        # NEW: result permanently save (history me hamesha rahega)
+                        st.session_state.pop("multi_saved_name", None)
+                        st.session_state.pop("multi_save_error", None)
+                        try:
+                            label = run_label.strip() or "_".join(t for t, _ in b_paths_with_names)
+                            st.session_state["multi_saved_name"] = storage.save_run(
+                                label, result_bytes, GH_CONF
+                            )
+                            st.session_state["history_bust"] = st.session_state.get("history_bust", 0) + 1
+                        except Exception as save_err:
+                            st.session_state["multi_save_error"] = str(save_err)
                     except Exception as e:
                         st.error(f"Error: {e}")
                         st.session_state.pop("multi_stats", None)
@@ -170,6 +218,12 @@ with tab_multi:
     if "multi_stats" in st.session_state:
         stats = st.session_state["multi_stats"]
         st.success("✅ Matching complete")
+        if st.session_state.get("multi_saved_name"):
+            st.info(f"💾 History me save ho gaya: `{st.session_state['multi_saved_name']}` "
+                    "— 📚 Saved history tab me kabhi bhi dekh sakte ho.")
+        if st.session_state.get("multi_save_error"):
+            st.warning(f"⚠️ History me save nahi ho paya: {st.session_state['multi_save_error']} "
+                       "(Result download kar lo.)")
         show_stats_row(stats["total_matched"], stats["total_unmatched_a"], stats["total_unmatched_b"])
 
         # NEW FEATURE: common centers (2+ projects mein match hue)
@@ -218,6 +272,87 @@ with tab_multi:
             file_name="Center_Matcher_Result_Multi.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+# ═══════════════════════════════════════════════════════════════
+#  TAB 3 — SAVED HISTORY (permanent)
+# ═══════════════════════════════════════════════════════════════
+def split_common_summary(raw):
+    """COMMON_SUMMARY sheet me 2 tables hain (project-wise + matrix);
+    inhe alag alag DataFrame me todta hai."""
+    blank = raw.index[raw.isna().all(axis=1)].tolist()
+    if not blank:
+        return raw, None
+    first = raw.iloc[:blank[0]]
+    first = pd.DataFrame(first.values[1:], columns=first.iloc[0].tolist())
+    rest = raw.iloc[blank[0] + 1:].dropna(how="all")
+    matrix = None
+    if len(rest) > 1:
+        body = rest.iloc[1:]
+        matrix = pd.DataFrame(body.values[1:], columns=body.iloc[0].tolist())
+        matrix = matrix.dropna(axis=1, how="all")
+    return first, matrix
+
+
+with tab_history:
+    st.subheader("📚 Saved history")
+    if GH_CONF:
+        st.caption(f"✅ Permanent storage: GitHub repo `{GH_CONF['repo']}` — "
+                   "reboot / redeploy ke baad bhi data rahega.")
+    else:
+        st.warning(
+            "⚠️ GitHub storage configure nahi hai — results local folder me save ho rahe hain. "
+            "Streamlit Cloud par ye reboot pe mit jaayega. App Settings → Secrets me `[github]` "
+            "section add karo (README/setup notes dekho)."
+        )
+
+    if st.button("🔄 Refresh list", key="hist_refresh"):
+        st.session_state["history_bust"] = st.session_state.get("history_bust", 0) + 1
+
+    try:
+        runs = cached_list_runs(GH_CONF, st.session_state.get("history_bust", 0))
+    except Exception as e:
+        runs = []
+        st.error(f"History load nahi hui: {e}")
+
+    if not runs:
+        st.info("Abhi koi saved run nahi hai. Multiple B files tab me matching run karo — "
+                "result apne aap yahan save ho jaayega.")
+    else:
+        by_name = {r["name"]: r for r in runs}
+        chosen = st.selectbox(
+            f"{len(runs)} saved run(s)",
+            options=list(by_name.keys()),
+            format_func=lambda n: f"{by_name[n]['saved_at']}  —  {by_name[n]['label']}",
+            key="hist_choice",
+        )
+        try:
+            data = cached_load_run(chosen, GH_CONF)
+            sheets = pd.read_excel(io.BytesIO(data), sheet_name=None, header=None)
+        except Exception as e:
+            sheets = None
+            st.error(f"Run load nahi hua: {e}")
+
+        if sheets:
+            st.download_button(
+                "⬇️ Download this run (Excel)", data=data, file_name=chosen,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="hist_download",
+            )
+            names = list(sheets.keys())
+            default_idx = names.index("COMMON_SUMMARY") if "COMMON_SUMMARY" in names else 0
+            sheet_pick = st.selectbox("Tab dekho", names, index=default_idx, key="hist_sheet")
+            raw = sheets[sheet_pick]
+            if sheet_pick == "COMMON_SUMMARY":
+                t1, t2 = split_common_summary(raw)
+                st.markdown("**Project-wise common summary**")
+                st.dataframe(t1, use_container_width=True, hide_index=True)
+                if t2 is not None:
+                    st.markdown("**Pairwise common centers**")
+                    st.dataframe(t2, use_container_width=True, hide_index=True)
+            else:
+                df_view = pd.DataFrame(raw.values[1:], columns=raw.iloc[0].tolist()) if len(raw) else raw
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
+
 
 st.divider()
 st.caption("Center Matcher Tool — internal use only")
