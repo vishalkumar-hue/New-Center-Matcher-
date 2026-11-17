@@ -642,6 +642,37 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
             "Common In (Count)", ascending=False, kind="stable"
         ).reset_index(drop=True)
 
+    # NEW FEATURE: COMMON_SUMMARY -- project-wise: kis project ke kitne
+    # centers dusre projects se common hain, aur kis kis project se
+    # (kitne) common hain + pairwise matrix.
+    COMMON_SUMMARY_SHEET = "COMMON_SUMMARY"
+    proj_sets = {t: {i for i, h in common_tracker.items() if t in h} for t in tab_order}
+    cs_rows = []
+    for t in tab_order:
+        S = proj_sets[t]
+        common_n = sum(1 for i in S if len(common_tracker[i]) >= 2)
+        with_parts = []
+        for u in tab_order:
+            if u == t:
+                continue
+            n = len(S & proj_sets[u])
+            if n:
+                with_parts.append(f"{u} ({n})")
+        cs_rows.append([
+            t, len(S), common_n, len(S) - common_n,
+            round(common_n / max(len(S), 1) * 100, 1),
+            ", ".join(with_parts) if with_parts else "-",
+        ])
+    common_summary_df = pd.DataFrame(cs_rows, columns=[
+        "Project Code", "Total Matched Centers", "Common With Other Projects",
+        "Only In This Project", "Common %", "Common With (Project: Count)",
+    ])
+    matrix_df = pd.DataFrame(
+        [[len(proj_sets[r] & proj_sets[c]) for c in tab_order] for r in tab_order],
+        index=tab_order, columns=tab_order,
+    )
+    matrix_df.index.name = "Project Code"
+
     GREEN  = PatternFill("solid", fgColor="C6EFCE")
     RED    = PatternFill("solid", fgColor="FFC7CE")
     YELLOW = PatternFill("solid", fgColor="FFEB9C")
@@ -653,6 +684,9 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         summary_df = summary_df[["tab", "matched", "unmatched_a", "unmatched_b", "match_rate"]]
         summary_df.columns = ["Tab", "Matched", "Unmatched A", "Unmatched B", "Match Rate %"]
         summary_df.to_excel(writer, sheet_name="SUMMARY", index=False)
+        common_summary_df.to_excel(writer, sheet_name=COMMON_SUMMARY_SHEET, index=False)
+        matrix_start = len(common_summary_df) + 3
+        matrix_df.to_excel(writer, sheet_name=COMMON_SUMMARY_SHEET, startrow=matrix_start)
         common_df.to_excel(writer, sheet_name=COMMON_SHEET, index=False)
 
         for tab_name, df in sheet_results.items():
@@ -679,6 +713,15 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 40)
 
     format_ws(wb["SUMMARY"], has_status=False)
+    format_ws(wb[COMMON_SUMMARY_SHEET], has_status=False)
+    ws_cs = wb[COMMON_SUMMARY_SHEET]
+    ws_cs.cell(row=matrix_start, column=1,
+               value="Pairwise common centers (diagonal = us project ke total matched)").font = Font(bold=True)
+    for cell in ws_cs[matrix_start + 1]:
+        if cell.value is not None:
+            cell.fill = HEADER
+            cell.font = WHITE_FONT
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
     format_ws(wb[COMMON_SHEET], has_status=False)
     for tab_name in sheet_results:
         sheet_name = tab_name[:31]
@@ -698,4 +741,5 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         "unmatched_districts": sorted(all_unmatched_districts),
         "common_count": len(common_df),
         "common_df": common_df,
+        "common_summary_df": common_summary_df,
     }
