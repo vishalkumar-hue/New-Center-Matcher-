@@ -716,7 +716,7 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
     format_ws(wb[COMMON_SUMMARY_SHEET], has_status=False)
     ws_cs = wb[COMMON_SUMMARY_SHEET]
     ws_cs.cell(row=matrix_start, column=1,
-               value="Pairwise common centers (diagonal = us project ke total matched)").font = Font(bold=True)
+               value="Pairwise common centers (diagonal = total matched centers of that project)").font = Font(bold=True)
     for cell in ws_cs[matrix_start + 1]:
         if cell.value is not None:
             cell.fill = HEADER
