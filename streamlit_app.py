@@ -172,6 +172,20 @@ with tab_multi:
         st.success("✅ Matching complete")
         show_stats_row(stats["total_matched"], stats["total_unmatched_a"], stats["total_unmatched_b"])
 
+        # NEW FEATURE: common centers (2+ projects mein match hue)
+        st.markdown("#### 🤝 Common centers (multiple projects mein match)")
+        st.metric("Common centers", stats.get("common_count", 0))
+        common_df = stats.get("common_df")
+        if common_df is not None and not common_df.empty:
+            show_cols = [c for c in common_df.columns
+                         if c in ("TEST CENTER NAME", "Common In (Count)", "Project Codes")
+                         or c.lower().endswith("district name")]
+            st.dataframe(common_df[show_cols], use_container_width=True, hide_index=True)
+            st.caption("Poora record (har project ka center name + match %) Excel ke "
+                       "'COMMON_CENTERS' tab mein hai.")
+        else:
+            st.info("Koi center ek se zyada project mein common match nahi hua.")
+
         st.markdown("#### Per-file breakdown")
         st.dataframe(
             [
