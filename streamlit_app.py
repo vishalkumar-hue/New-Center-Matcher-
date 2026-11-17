@@ -186,6 +186,12 @@ with tab_multi:
         else:
             st.info("Koi center ek se zyada project mein common match nahi hua.")
 
+        cs_df = stats.get("common_summary_df")
+        if cs_df is not None and not cs_df.empty:
+            st.markdown("#### 📊 Project-wise common summary")
+            st.dataframe(cs_df, use_container_width=True, hide_index=True)
+            st.caption("Pairwise matrix Excel ke 'COMMON_SUMMARY' tab mein neeche hai.")
+
         st.markdown("#### Per-file breakdown")
         st.dataframe(
             [
