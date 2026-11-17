@@ -514,6 +514,9 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
     sheet_results = {}
     per_file_stats = []
     all_unmatched_districts = set()
+    # NEW FEATURE: har List A center ke liye track karo ki wo kin-kin
+    # project (B file / tab) mein match hua -- {idx_a: {tab_name: (b_name, score)}}
+    common_tracker = {}
 
     for tab_name, file_b_path in file_b_paths_with_names:
         df_b = pd.read_excel(file_b_path)
@@ -597,6 +600,11 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         result_df = pd.DataFrame(rows, columns=cols)
         sheet_results[tab_name] = result_df
 
+        for idx_a, (idx_b, score) in matches.items():
+            common_tracker.setdefault(idx_a, {})[tab_name] = (
+                str(df_b.loc[idx_b, COL_NAME]), score
+            )
+
         m  = (result_df["Status"] == "MATCHED").sum()
         ua = (result_df["Status"] == "UNMATCHED_A").sum()
         ub = (result_df["Status"] == "UNMATCHED_B").sum()
@@ -606,6 +614,33 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
             "match_rate": round(m / max(m + ua, 1) * 100, 1)
         })
         all_unmatched_districts |= dmatch.unmatched_districts
+
+    # NEW FEATURE: COMMON CENTERS -- jo A center 2 ya zyada projects mein
+    # match hue, unka record (kin project codes mein match hua)
+    COMMON_SHEET = "COMMON_CENTERS"
+    tab_order = [t for t, _ in file_b_paths_with_names]
+    a_raw_all = [c for c in df_a.columns if not c.startswith('_')]
+    common_rows = []
+    for idx_a, tabs_hit in common_tracker.items():
+        if len(tabs_hit) < 2:
+            continue
+        projs = [t for t in tab_order if t in tabs_hit]
+        row = list(df_a.loc[idx_a, a_raw_all])
+        row += [len(projs), ", ".join(projs)]
+        for t in tab_order:
+            if t in tabs_hit:
+                row += [tabs_hit[t][0], tabs_hit[t][1]]
+            else:
+                row += [None, None]
+        common_rows.append(row)
+    common_cols = a_raw_all + ["Common In (Count)", "Project Codes"]
+    for t in tab_order:
+        common_cols += [f"{t} - Center Name", f"{t} - Match %"]
+    common_df = pd.DataFrame(common_rows, columns=common_cols)
+    if not common_df.empty:
+        common_df = common_df.sort_values(
+            "Common In (Count)", ascending=False, kind="stable"
+        ).reset_index(drop=True)
 
     GREEN  = PatternFill("solid", fgColor="C6EFCE")
     RED    = PatternFill("solid", fgColor="FFC7CE")
@@ -618,6 +653,7 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         summary_df = summary_df[["tab", "matched", "unmatched_a", "unmatched_b", "match_rate"]]
         summary_df.columns = ["Tab", "Matched", "Unmatched A", "Unmatched B", "Match Rate %"]
         summary_df.to_excel(writer, sheet_name="SUMMARY", index=False)
+        common_df.to_excel(writer, sheet_name=COMMON_SHEET, index=False)
 
         for tab_name, df in sheet_results.items():
             df.to_excel(writer, sheet_name=tab_name[:31], index=False)
@@ -643,6 +679,7 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 40)
 
     format_ws(wb["SUMMARY"], has_status=False)
+    format_ws(wb[COMMON_SHEET], has_status=False)
     for tab_name in sheet_results:
         sheet_name = tab_name[:31]
         if sheet_name in wb.sheetnames:
@@ -659,4 +696,6 @@ def run_matching_multi(file_a_path, file_b_paths_with_names, output_path):
         "total_unmatched_a": total_unmatched_a,
         "total_unmatched_b": total_unmatched_b,
         "unmatched_districts": sorted(all_unmatched_districts),
+        "common_count": len(common_df),
+        "common_df": common_df,
     }
