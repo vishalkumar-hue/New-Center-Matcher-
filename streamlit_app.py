@@ -9,7 +9,7 @@ import pandas as pd
 from matcher import run_matching, run_matching_multi
 import storage
 
-st.set_page_config(page_title="Center Matcher Tool", page_icon="🔎", layout="centered")
+st.set_page_config(page_title="Center Matcher Tool", page_icon="🔎", layout="wide")
 
 # ── Custom styling (colors work in both light and dark theme) ──
 st.markdown("""
